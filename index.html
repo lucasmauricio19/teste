@@ -386,13 +386,21 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
 
   function obterLembretesReagendamentoCAICAVV(){
     if(typeof atendimentos === "undefined" || !Array.isArray(atendimentos)) return [];
-    if(typeof tecnicoLogado === "undefined" || !tecnicoLogado || tecnicoLogado.role !== "tecnico") return [];
+    if(typeof tecnicoLogado === "undefined" || !tecnicoLogado) return [];
+
+    const eTecnico = tecnicoLogado.role === "tecnico";
+    const eJohanna = tecnicoLogado.role === "adm" && String(tecnicoLogado.nome || "").trim().toLowerCase() === "johanna";
+
+    // Técnicos veem somente seus próprios atendimentos.
+    // Johanna, por ser a ADM responsável por essa visão, vê todos os técnicos.
+    // Outros perfis administrativos mantêm a lógica anterior: não recebem esta área.
+    if(!eTecnico && !eJohanna) return [];
 
     const idsVistos = new Set();
 
     return atendimentos
       .filter(atendimentoValidoParaLembreteCAICAVV)
-      .filter(item => String(item.tecnico || "") === String(tecnicoLogado.nome || ""))
+      .filter(item => !eTecnico || String(item.tecnico || "") === String(tecnicoLogado.nome || ""))
       .filter(item => {
         const chave = String(item.id);
         if(idsVistos.has(chave)) return false;
@@ -420,8 +428,12 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
     if(!container) return;
 
     const visivelNaTela = typeof telaAtualCaicavv === "undefined" || telaAtualCaicavv === "agendamentos";
-    const eTecnico = typeof tecnicoLogado !== "undefined" && tecnicoLogado && tecnicoLogado.role === "tecnico";
-    if(!visivelNaTela || !eTecnico){
+    const usuarioAtual = typeof tecnicoLogado !== "undefined" && tecnicoLogado ? tecnicoLogado : null;
+    const eTecnico = !!usuarioAtual && usuarioAtual.role === "tecnico";
+    const eJohanna = !!usuarioAtual && usuarioAtual.role === "adm" &&
+      String(usuarioAtual.nome || "").trim().toLowerCase() === "johanna";
+
+    if(!visivelNaTela || (!eTecnico && !eJohanna)){
       container.innerHTML = "";
       container.classList.add("hidden");
       return;
@@ -447,6 +459,7 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
           <div>
             <div class="lembrete-reagendamento-card__nome">${escapeHTML(item.nome || `Pasta ${item.pasta || "—"}`)}</div>
             <div class="lembrete-reagendamento-card__linha">
+              <span>👤 Técnico: ${escapeHTML(item.tecnico || "—")}</span>
               <span>📁 Pasta ${escapeHTML(item.pasta || "—")}</span>
               <span>📅 ${escapeHTML(formatarDataBR(item.data))}</span>
               <span>🕒 ${escapeHTML(item.hora || "—")}</span>
@@ -464,7 +477,9 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
           <span class="lembretes-reagendamento__icone" aria-hidden="true">🔔</span>
           <div>
             <h3>Lembretes de atendimento</h3>
-            <p>Atendimentos do seu cadastro com data entre hoje e os próximos 7 dias.</p>
+            <p>${eJohanna
+              ? "Atendimentos de todos os técnicos entre hoje e os próximos 7 dias."
+              : "Atendimentos do seu cadastro entre hoje e os próximos 7 dias."}</p>
           </div>
         </div>
         <span class="lembretes-reagendamento__contador" aria-label="Quantidade de lembretes">${lembretes.length}</span>
@@ -1304,6 +1319,16 @@ body.modo-app{
 
 
 
+<style id="caicavv-identificacao-style">
+.caicavv-identificacao-opcoes{display:grid;grid-template-columns:1fr;gap:11px;margin:18px 0 10px}
+.caicavv-identificacao-opcao{width:100%;min-height:52px;padding:13px 16px;border:1px solid rgba(37,99,235,.18);border-radius:13px;background:linear-gradient(180deg,#fff 0%,#f4f8ff 100%);color:#071943;font-weight:900;font-size:15px;cursor:pointer;box-shadow:0 7px 18px rgba(37,99,235,.08);transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+.caicavv-identificacao-opcao:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(37,99,235,.13);border-color:var(--tema,#2563eb)}
+.caicavv-identificacao-opcao.perfil{background:linear-gradient(180deg,#f8fbff 0%,#eaf2ff 100%);color:#1d4ed8;font-size:17px;min-height:58px}
+.caicavv-identificacao-voltar{margin-top:6px!important;background:transparent!important;color:var(--tema,#2563eb)!important;border:1px solid #cfe0ff!important;box-shadow:none!important}
+.caicavv-identificacao-voltar:hover{background:#eff6ff!important}
+@media(min-width:520px){.caicavv-identificacao-opcoes{grid-template-columns:1fr 1fr}.caicavv-identificacao-opcao:first-child:last-child{grid-column:1/-1}}
+</style>
+
 <div id="loginDiv" class="login-screen">
   <div class="background">
     <div class="big-flower-bg"></div>
@@ -1316,48 +1341,27 @@ body.modo-app{
   </div>
 
   <main class="login-area">
-    <section class="login-card">
+    <section class="login-card caicavv-identificacao-card">
       <div class="flower-logo">
-        <span class="petal p1"></span>
-        <span class="petal p2"></span>
-        <span class="petal p3"></span>
-        <span class="petal p4"></span>
-        <span class="petal p5"></span>
-        <span class="petal p6"></span>
-        <span class="petal p7"></span>
-        <span class="petal p8"></span>
+        <span class="petal p1"></span><span class="petal p2"></span>
+        <span class="petal p3"></span><span class="petal p4"></span>
+        <span class="petal p5"></span><span class="petal p6"></span>
+        <span class="petal p7"></span><span class="petal p8"></span>
         <span class="flower-center"></span>
       </div>
 
       <h1>CAICAVV</h1>
+      <div class="system-row"><span></span><p>SISTEMA INTERNO</p><span></span></div>
 
-      <div class="system-row">
-        <span></span>
-        <p>SISTEMA INTERNO</p>
-        <span></span>
-      </div>
+      <h2 id="identificacaoTitulo">Como você deseja entrar?</h2>
+      <p id="identificacaoDescricao" class="description">Selecione uma opção para continuar.</p>
 
-      <h2>Acesso ao Sistema</h2>
-      <p class="description">Informe suas credenciais para continuar</p>
+      <div id="identificacaoOpcoes" class="caicavv-identificacao-opcoes"></div>
 
-      <div class="input-group">
-        <div class="icon-box">👤</div>
-        <input id="user" type="text" placeholder="Usuário" autocomplete="username">
-        <span class="side-icon">♙</span>
-      </div>
+      <button type="button" id="btnVoltarIdentificacao" class="caicavv-identificacao-voltar hidden"
+              onclick="voltarIdentificacao()">← Voltar</button>
 
-      <div class="input-group">
-        <div class="icon-box">🔒</div>
-        <input id="pass" type="password" placeholder="Senha" autocomplete="current-password">
-        <button type="button" class="btn-olho login-eye" onclick="alternarSenha()" aria-label="Mostrar ou esconder senha">◉</button>
-      </div>
-
-      <button type="button" class="login-button" onclick="login()">
-        <span>↪</span>
-        Entrar
-      </button>
-
-      <p class="secure">🛡️ Sistema restrito para técnicos autorizados</p>
+      <p class="secure">🛡️ Selecione seu perfil para entrar no sistema</p>
 
       <div class="footer">
         <p>CAICAVV • Sistema Interno</p>
@@ -1366,7 +1370,6 @@ body.modo-app{
     </section>
   </main>
 </div>
-
 
 <div id="app" class="app-shell" style="display:none">
   <aside class="sidebar">
@@ -1401,7 +1404,7 @@ body.modo-app{
 
     <div class="logout" onclick="logout()">
       <div>↩</div>
-      <span>Sair</span>
+      <span>Trocar usuário</span>
     </div>
   </aside>
 
@@ -1806,9 +1809,6 @@ function textoSeguro(valor, max=120){
 }
 
 function mostrarErro(msg){ mostrarToast(msg, "erro"); }
-function salvarSessao(login){ sessionStorage.setItem("caicavv_user", login); }
-function lerSessao(){ return sessionStorage.getItem("caicavv_user"); }
-function limparSessao(){ sessionStorage.removeItem("caicavv_user"); }
 
 gerarHorarios();
 gerarHorariosEdicao();
@@ -1870,86 +1870,120 @@ function confirmarPasta(){
   avisoCadastro.textContent = "Cadastro encontrado com sucesso.";
 }
 
-function alternarSenha(){
-  const campo = document.getElementById("pass");
-  if(!campo) return;
-  campo.type = campo.type === "password" ? "text" : "password";
+const CHAVE_USUARIO_CAICAVV = "caicavv_usuario_atual";
+
+function obterIdentidadesCAICAVV(){
+  return Object.entries(usuarios).map(([login, dados]) => ({
+    login,
+    nome: dados.nome,
+    role: dados.role
+  }));
 }
 
-function ativarEnterLogin(){
-  [user, pass].forEach(campo => {
-    campo.addEventListener("keydown", (event) => {
-      if(event.key === "Enter") {
-        event.preventDefault();
-        login();
-      }
-    });
-  });
+function salvarSessao(login){
+  // Apenas um identificador válido do catálogo local é persistido.
+  // As permissões nunca são lidas do localStorage: são derivadas de usuarios.
+  if(usuarios[login]){
+    localStorage.setItem(CHAVE_USUARIO_CAICAVV, login);
+  }
 }
 
-ativarEnterLogin();
+function lerSessao(){
+  const login = localStorage.getItem(CHAVE_USUARIO_CAICAVV);
+  return login && usuarios[login] ? login : null;
+}
 
-async function login(){
-  let u = String(user.value || "").trim().toLowerCase();
-  let p = String(pass.value || "");
+function limparSessao(){
+  localStorage.removeItem(CHAVE_USUARIO_CAICAVV);
+  // Remove também a sessão antiga baseada em senha, sem apagar nenhum dado do Firebase.
+  try{ sessionStorage.removeItem("caicavv_user"); }catch(e){}
+}
 
-  await carregarSenhasFirebase();
+function prepararTelaIdentificacao(){
+  const titulo = document.getElementById("identificacaoTitulo");
+  const descricao = document.getElementById("identificacaoDescricao");
+  const opcoes = document.getElementById("identificacaoOpcoes");
+  const voltar = document.getElementById("btnVoltarIdentificacao");
+  if(!titulo || !descricao || !opcoes || !voltar) return;
 
-  if(!u || !p){
-    mostrarErro("Preencha usuário e senha.");
+  titulo.textContent = "Como você deseja entrar?";
+  descricao.textContent = "Selecione Técnico ou Adm.";
+  opcoes.innerHTML = `
+    <button type="button" class="caicavv-identificacao-opcao perfil" onclick="mostrarIdentificacoes('tecnico')">👤 Técnico</button>
+    <button type="button" class="caicavv-identificacao-opcao perfil" onclick="mostrarIdentificacoes('adm')">🛡️ Adm</button>`;
+  voltar.classList.add("hidden");
+}
+
+function mostrarIdentificacoes(tipo){
+  const titulo = document.getElementById("identificacaoTitulo");
+  const descricao = document.getElementById("identificacaoDescricao");
+  const opcoes = document.getElementById("identificacaoOpcoes");
+  const voltar = document.getElementById("btnVoltarIdentificacao");
+  if(!titulo || !descricao || !opcoes || !voltar) return;
+
+  const identidades = obterIdentidadesCAICAVV().filter(item =>
+    tipo === "tecnico" ? item.role === "tecnico" : ["coordenacao","adm","recepcao"].includes(item.role)
+  );
+
+  titulo.textContent = tipo === "tecnico" ? "Técnico" : "Adm";
+  descricao.textContent = tipo === "tecnico"
+    ? "Selecione o técnico para continuar."
+    : "Selecione a função administrativa para continuar.";
+
+  opcoes.innerHTML = identidades.map(item => `
+    <button type="button" class="caicavv-identificacao-opcao"
+      onclick="entrarComo('${escapeHTML(item.login)}')">${escapeHTML(item.nome)}</button>
+  `).join("");
+  voltar.classList.remove("hidden");
+}
+
+async function entrarComo(login){
+  const identidade = usuarios[login];
+  if(!identidade || !permissoes[identidade.role]){
+    mostrarErro("Identificação inválida.");
+    limparSessao();
+    prepararTelaIdentificacao();
     return;
   }
 
-  if(usuarios[u] && senhas[u] === p){
-    tecnicoLogado = usuarios[u];
+  // A seleção é feita a partir do catálogo existente; o localStorage só memoriza o identificador.
+  salvarSessao(login);
+  tecnicoLogado = identidade;
+  filtroAtual = identidade.role === "tecnico" ? identidade.nome : "";
 
-    if(tecnicoLogado.role === "tecnico"){
-      filtroAtual = tecnicoLogado.nome;
-    } else {
-      filtroAtual = "";
-    }
+  loginDiv.style.display = "none";
+  app.style.display = "block";
+  document.body.classList.add("modo-app");
+  aplicarTemaSalvo();
 
-    salvarSessao(u);
-    loginDiv.style.display = "none";
-    app.style.display = "block";
-    document.body.classList.add("modo-app");
-    aplicarTemaSalvo();
-
-    montarMenu();
-    carregarFiltrosAvancados();
-    aplicarPermissoesNaTela();
-    await carregar();
-  } else {
-    mostrarErro("Senha ou usuário incorretos");
-  }
+  montarMenu();
+  carregarFiltrosAvancados();
+  aplicarPermissoesNaTela();
+  await carregar();
 }
 
 (async function restaurarSessao(){
-  await carregarSenhasFirebase();
-  const u = lerSessao();
-  if(u && usuarios[u]){
-    tecnicoLogado = usuarios[u];
+  const loginSalvo = lerSessao();
 
-    if(tecnicoLogado.role === "tecnico"){
-      filtroAtual = tecnicoLogado.nome;
-    } else {
-      filtroAtual = "";
-    }
-
-    loginDiv.style.display = "none";
-    app.style.display = "block";
-    document.body.classList.add("modo-app");
-    aplicarTemaSalvo();
-
-    montarMenu();
-    carregarFiltrosAvancados();
-    aplicarPermissoesNaTela();
-    await carregar();
+  if(loginSalvo && usuarios[loginSalvo]){
+    await entrarComo(loginSalvo);
+  }else{
+    limparSessao();
+    loginDiv.style.display = "block";
+    app.style.display = "none";
+    document.body.classList.remove("modo-app");
+    prepararTelaIdentificacao();
   }
 })();
 
+function voltarIdentificacao(){
+  prepararTelaIdentificacao();
+}
+
 function logout(){
   limparSessao();
+  tecnicoLogado = null;
+  filtroAtual = "";
   location.reload();
 }
 
