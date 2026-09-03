@@ -333,6 +333,7 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
 
   const LIMITE_DIAS_LEMBRETE_REAGENDAMENTO = 7;
   const MILISSEGUNDOS_POR_DIA = 24 * 60 * 60 * 1000;
+  const CHAVE_LEMBRETES_REAGENDAMENTO_OK = "caicavv_lembretes_reagendamento_ok_v1";
   let intervaloLembretesReagendamento = null;
 
   function partesDataCalendarioCAICAVV(dataISO){
@@ -417,6 +418,34 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
       });
   }
 
+  function obterLembretesReagendamentoOkCAICAVV(){
+    try{
+      const valor = localStorage.getItem(CHAVE_LEMBRETES_REAGENDAMENTO_OK);
+      if(!valor) return new Set();
+      const lista = JSON.parse(valor);
+      return new Set(Array.isArray(lista) ? lista.map(String) : []);
+    }catch(e){
+      return new Set();
+    }
+  }
+
+  function salvarLembretesReagendamentoOkCAICAVV(set){
+    try{
+      localStorage.setItem(CHAVE_LEMBRETES_REAGENDAMENTO_OK, JSON.stringify(Array.from(set)));
+    }catch(e){}
+  }
+
+  function chaveLembreteReagendamentoCAICAVV(item){
+    return `${item.id}__${item.data || ""}__${item.hora || ""}`;
+  }
+
+  window.confirmarLembreteReagendamentoCAICAVV = function(chave){
+    const ok = obterLembretesReagendamentoOkCAICAVV();
+    ok.add(String(chave));
+    salvarLembretesReagendamentoOkCAICAVV(ok);
+    renderLembretesReagendamentoCAICAVV();
+  };
+
   function textoDiasFaltamCAICAVV(dias){
     if(dias === 0) return "Faltam 0 dias • hoje";
     if(dias === 1) return "Falta 1 dia";
@@ -439,7 +468,9 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
       return;
     }
 
-    const lembretes = obterLembretesReagendamentoCAICAVV();
+    const lembretesOk = obterLembretesReagendamentoOkCAICAVV();
+    const lembretes = obterLembretesReagendamentoCAICAVV()
+      .filter(({item}) => !lembretesOk.has(chaveLembreteReagendamentoCAICAVV(item)));
     if(!lembretes.length){
       container.innerHTML = "";
       container.classList.add("hidden");
@@ -453,6 +484,7 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
         ? "Este atendimento foi reagendado e a nova data está próxima."
         : "Este atendimento está dentro da janela de 7 dias.";
       const classeDias = dias === 0 ? "hoje" : "";
+      const chave = chaveLembreteReagendamentoCAICAVV(item);
 
       return `
         <article class="lembrete-reagendamento-card">
@@ -467,7 +499,10 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
             <div class="lembrete-reagendamento-card__tipo">🔔 ${escapeHTML(tipo)}</div>
             <div class="lembrete-reagendamento-card__linha" style="margin-top:6px;font-weight:600">${escapeHTML(detalhe)}</div>
           </div>
-          <div class="lembrete-reagendamento-card__dias ${classeDias}">${escapeHTML(textoDiasFaltamCAICAVV(dias))}</div>
+          <div style="display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:92px;">
+            <div class="lembrete-reagendamento-card__dias ${classeDias}">${escapeHTML(textoDiasFaltamCAICAVV(dias))}</div>
+            <button type="button" class="btn btn-primary" style="min-width:92px;padding:8px 12px;border-radius:10px;font-weight:800;cursor:pointer;" onclick="confirmarLembreteReagendamentoCAICAVV(${JSON.stringify(chave).replace(/</g, "\u003c")})" aria-label="Confirmar lembrete">OK</button>
+          </div>
         </article>`;
     }).join("");
 
@@ -3166,6 +3201,8 @@ async function salvarCadastrosFirebase(){
     }
   });
 
+  // Normaliza primeiro a memória local, mas só considera o salvamento concluído
+  // depois que o Firebase confirmar a escrita.
   Object.keys(cadastros).forEach(pasta => delete cadastros[pasta]);
   Object.assign(cadastros, cadastrosLimpos);
 
@@ -3174,15 +3211,46 @@ async function salvarCadastrosFirebase(){
     atualizadoEm: new Date().toISOString()
   };
 
-  try{
-    // update substitui o campo cadastros inteiro. Assim, pastas apagadas não voltam ao dar F5.
-    await DOC_ATENDIMENTOS.update(payload);
-  }catch(e){
-    // Se o documento ainda não existir, cria normalmente.
-    if(e && (e.code === "not-found" || String(e.message || "").toLowerCase().includes("no document"))){
-      await DOC_ATENDIMENTOS.set(payload, { merge: true });
-      return;
+  const confirmarGravacao = async () => {
+    const confirmacao = await DOC_ATENDIMENTOS.get();
+    if(!confirmacao.exists){
+      throw new Error("O documento do Firebase não existe após o salvamento.");
     }
+
+    const dadosConfirmados = confirmacao.data() || {};
+    const cadastrosConfirmados = dadosConfirmados.cadastros;
+    if(!cadastrosConfirmados || typeof cadastrosConfirmados !== "object") {
+      throw new Error("O campo de cadastros não foi confirmado no Firebase.");
+    }
+
+    // Confirma uma cópia equivalente do conjunto salvo, inclusive novas pastas e exclusões.
+    const esperado = JSON.stringify(cadastrosLimpos);
+    const confirmado = JSON.stringify(cadastrosConfirmados);
+    if(esperado !== confirmado){
+      throw new Error("O Firebase devolveu uma versão diferente dos cadastros recém-salvos.");
+    }
+  };
+
+  try{
+    // Mantém o campo cadastros como uma unidade no mesmo documento compartilhado.
+    // Transaction evita que uma escrita concorrente antiga sobrescreva o cadastro novo.
+    await db.runTransaction(async transaction => {
+      const snap = await transaction.get(DOC_ATENDIMENTOS);
+      if(snap.exists){
+        transaction.update(DOC_ATENDIMENTOS, payload);
+      }else{
+        transaction.set(DOC_ATENDIMENTOS, {
+          ...payload,
+          itens: [],
+          logs: [],
+          senhas: senhas
+        }, { merge: true });
+      }
+    });
+
+    await confirmarGravacao();
+  }catch(e){
+    console.error("Erro ao salvar pacientes no Firebase:", e);
     throw e;
   }
 }
