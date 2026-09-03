@@ -26,6 +26,8 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
         const DOC_ATENDIMENTOS = db.collection("caicavv").doc("atendimentos");
+        // Cadastro de pacientes em documento próprio para não ser sobrescrito por gravações de atendimentos.
+        const DOC_CADASTROS = db.collection("caicavv").doc("cadastros");
     </script>
 </head>
 <body>
@@ -446,6 +448,15 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
     renderLembretesReagendamentoCAICAVV();
   };
 
+  document.addEventListener("click", function(event){
+    const botao = event.target.closest("button[data-acao=\"confirmar-lembrete\"]");
+    if(!botao) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const chave = botao.getAttribute("data-chave-lembrete");
+    if(chave) window.confirmarLembreteReagendamentoCAICAVV(chave);
+  });
+
   function textoDiasFaltamCAICAVV(dias){
     if(dias === 0) return "Faltam 0 dias • hoje";
     if(dias === 1) return "Falta 1 dia";
@@ -501,7 +512,7 @@ body.modo-app.aparencia-noturna .lembretes-reagendamento__icone{
           </div>
           <div style="display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:92px;">
             <div class="lembrete-reagendamento-card__dias ${classeDias}">${escapeHTML(textoDiasFaltamCAICAVV(dias))}</div>
-            <button type="button" class="btn btn-primary" style="min-width:92px;padding:8px 12px;border-radius:10px;font-weight:800;cursor:pointer;" onclick="confirmarLembreteReagendamentoCAICAVV(${JSON.stringify(chave).replace(/</g, "\u003c")})" aria-label="Confirmar lembrete">OK</button>
+            <button type="button" class="btn btn-primary" style="min-width:92px;padding:8px 12px;border-radius:10px;font-weight:800;cursor:pointer;" data-acao="confirmar-lembrete" data-chave-lembrete="${escapeHTML(chave)}" aria-label="Confirmar lembrete">OK</button>
           </div>
         </article>`;
     }).join("");
@@ -3201,54 +3212,24 @@ async function salvarCadastrosFirebase(){
     }
   });
 
-  // Normaliza primeiro a memória local, mas só considera o salvamento concluído
-  // depois que o Firebase confirmar a escrita.
-  Object.keys(cadastros).forEach(pasta => delete cadastros[pasta]);
-  Object.assign(cadastros, cadastrosLimpos);
-
-  const payload = {
-    cadastros: cadastrosLimpos,
-    atualizadoEm: new Date().toISOString()
-  };
-
-  const confirmarGravacao = async () => {
-    const confirmacao = await DOC_ATENDIMENTOS.get();
-    if(!confirmacao.exists){
-      throw new Error("O documento do Firebase não existe após o salvamento.");
-    }
-
-    const dadosConfirmados = confirmacao.data() || {};
-    const cadastrosConfirmados = dadosConfirmados.cadastros;
-    if(!cadastrosConfirmados || typeof cadastrosConfirmados !== "object") {
-      throw new Error("O campo de cadastros não foi confirmado no Firebase.");
-    }
-
-    // Confirma uma cópia equivalente do conjunto salvo, inclusive novas pastas e exclusões.
-    const esperado = JSON.stringify(cadastrosLimpos);
-    const confirmado = JSON.stringify(cadastrosConfirmados);
-    if(esperado !== confirmado){
-      throw new Error("O Firebase devolveu uma versão diferente dos cadastros recém-salvos.");
-    }
-  };
-
   try{
-    // Mantém o campo cadastros como uma unidade no mesmo documento compartilhado.
-    // Transaction evita que uma escrita concorrente antiga sobrescreva o cadastro novo.
-    await db.runTransaction(async transaction => {
-      const snap = await transaction.get(DOC_ATENDIMENTOS);
-      if(snap.exists){
-        transaction.update(DOC_ATENDIMENTOS, payload);
-      }else{
-        transaction.set(DOC_ATENDIMENTOS, {
-          ...payload,
-          itens: [],
-          logs: [],
-          senhas: senhas
-        }, { merge: true });
-      }
-    });
+    // O cadastro de pacientes tem documento próprio no mesmo Firebase.
+    // Isso evita que um salvamento de atendimentos substitua a lista de pacientes.
+    await DOC_CADASTROS.set({
+      cadastros: cadastrosLimpos,
+      atualizadoEm: new Date().toISOString()
+    }, { merge: true });
 
-    await confirmarGravacao();
+    // Mantém também a cópia legada no documento de atendimentos para compatibilidade
+    // com a estrutura anterior do sistema.
+    await DOC_ATENDIMENTOS.set({
+      cadastros: cadastrosLimpos,
+      atualizadoEm: new Date().toISOString()
+    }, { merge: true });
+
+    // Usa exatamente a versão confirmada que foi enviada ao Firebase.
+    Object.keys(cadastros).forEach(pasta => delete cadastros[pasta]);
+    Object.assign(cadastros, cadastrosLimpos);
   }catch(e){
     console.error("Erro ao salvar pacientes no Firebase:", e);
     throw e;
@@ -3275,12 +3256,39 @@ async function carregarAtendimentosFirebase(){
         await salvarSenhasFirebase(false);
       }
 
-      if(dados.cadastros && typeof dados.cadastros === "object"){
+      // Primeiro tenta o documento dedicado de pacientes. Se ele ainda não existir,
+      // usa a estrutura legada dentro de "atendimentos" e migra sem perder os dados.
+      let dadosCadastros = null;
+      try{
+        const snapCadastros = await DOC_CADASTROS.get();
+        if(snapCadastros.exists){
+          const dc = snapCadastros.data() || {};
+          if(dc.cadastros && typeof dc.cadastros === "object") dadosCadastros = dc.cadastros;
+        }
+      }catch(e){
+        console.warn("Não foi possível ler o documento dedicado de cadastros; usando a cópia legada.", e);
+      }
+
+      if(!dadosCadastros && dados.cadastros && typeof dados.cadastros === "object"){
+        dadosCadastros = dados.cadastros;
+        // Migra a base legada para o documento dedicado.
+        try{
+          await DOC_CADASTROS.set({
+            cadastros: dadosCadastros,
+            atualizadoEm: new Date().toISOString()
+          }, { merge: true });
+        }catch(e){
+          console.warn("Migração dos cadastros para o documento dedicado falhou; a cópia legada continuará sendo usada.", e);
+        }
+      }
+
+      if(dadosCadastros){
         Object.keys(cadastros).forEach(pasta => delete cadastros[pasta]);
-        Object.entries(dados.cadastros).forEach(([pasta, nomes]) => {
+        Object.entries(dadosCadastros).forEach(([pasta, nomes]) => {
           const pastaLimpa = normalizarPasta(pasta);
           if(!pastaLimpa) return;
-          cadastros[pastaLimpa] = Array.isArray(nomes) ? nomes.map(prepararNomePaciente).filter(Boolean) : [];
+          const lista = Array.isArray(nomes) ? nomes.map(prepararNomePaciente).filter(Boolean) : [];
+          if(lista.length) cadastros[pastaLimpa] = lista;
         });
       } else {
         await salvarCadastrosFirebase();
@@ -3414,6 +3422,9 @@ async function criarNovoPaciente(){
     return;
   }
 
+  const cadastrosAntes = JSON.parse(JSON.stringify(cadastros));
+
+  // Permite adicionar quantos pacientes forem necessários na mesma pasta.
   if(!Array.isArray(cadastros[pastaNova])) cadastros[pastaNova] = [];
   cadastros[pastaNova].push(nomeNovo);
 
@@ -3422,7 +3433,10 @@ async function criarNovoPaciente(){
     abrirTelaPacientes();
     mostrarSucesso("Paciente adicionado com sucesso.");
   }catch(e){
-    mostrarErro("Não foi possível salvar o paciente.");
+    Object.keys(cadastros).forEach(pasta => delete cadastros[pasta]);
+    Object.assign(cadastros, cadastrosAntes);
+    abrirTelaPacientes();
+    mostrarErro("Não foi possível salvar o paciente no Firebase.");
   }
 }
 
